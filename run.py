@@ -58,13 +58,11 @@ def train(
     if args.peft.use_peft:
         logger.info(f"Detected PEFT configuration, configuring lora")
         from open_tinker.lora.adapter import apply_lora, apply_adalora
-        if args.peft.use_adalora:
+        if args.peft.type == "adalora":
             model = apply_adalora(model, args)
         else:
             model = apply_lora(model, args)
         logger.info(f"Lora configured successfully")
-    
-    model.print_trainable_parameters()
 
     # 4.Load and configure tokenizer for left padding
     logger.info(f"Loading tokenizer from {args.model.model_name_or_path}")
@@ -76,7 +74,6 @@ def train(
         tokenizer.pad_token_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
     if hasattr(model.config, 'pad_token_id') and model.config.pad_token_id is None:
         model.config.pad_token_id = tokenizer.pad_token_id
-
 
     # 5.Training configuration
     training_args = GRPOConfig(

@@ -9,10 +9,10 @@ def apply_adalora(model, args):
         target_modules=args.peft.target_modules,
         lora_dropout=args.peft.lora_dropout,
     )
-    return AdaLoraModel(model, config, "default")
+    return get_peft_model(model, config)
 
 def apply_lora(model, args):
-    from peft import LoraConfig, LoraModel
+    from peft import LoraConfig, get_peft_model
     config = LoraConfig(
         peft_type="LORA",
         task_type=args.peft.task_type,
@@ -22,7 +22,7 @@ def apply_lora(model, args):
         target_modules=args.peft.target_modules,
         lora_dropout=args.peft.lora_dropout,
     )
-    return LoraModel(model, config, "default")
+    return get_peft_model(model, config)
 
 def apply_vera(model, args):
     from peft import VeraConfig, get_peft_model

@@ -6,6 +6,7 @@
     dtype = "bfloat16"
 
 [peft]
+    type = "lora"
     use_peft = true
     task_type = "CAUSAL_LM"
     use_dora = true
