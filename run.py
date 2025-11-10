@@ -9,10 +9,9 @@ from fire import Fire
 
 from open_tinker.utils.utils import (
     parse_toml_to_args, # toml to args
-    make_conversation # add system prompt to dataset
 )
 from open_tinker.utils.logging import init_logger, logger
-from open_tinker.trl_trainer.grpo import format_reward, accuracy_reward
+from open_tinker.data import load_dataset
 
 def fuzzy_jobs(
     config_path: str,
@@ -25,7 +24,7 @@ def fuzzy_jobs(
         os.makedirs(output_dir)
     else:
         logger.info(f"Output directory {output_dir} already exists, using it")
-    set_seed(args.training.seed)
+    set_seed(args.common.seed)
     
     return args
 
@@ -38,16 +37,20 @@ def train(
 
     # 1. load dataset
     logger.info(f"Loading dataset from {args.dataset.dataset_name_or_path}")
-    train_dataset, test_dataset = load_dataset(args.dataset.dataset_name_or_path, split=['train[:5%]', 'test[:5%]'])
-    train_dataset = train_dataset.map(make_conversation).remove_columns(['messages', 'problem'])
-    test_dataset = test_dataset.map(make_conversation)
-    logger.info(f"Loaded {len(train_dataset)} train samples and {len(test_dataset)} test samples")
+    dataset = load_dataset(
+        args.dataset.dataset_name_or_path,
+        example_numbers=args.dataset.example_numbers
+    )
+    train_dataset = dataset["train_dataset"]
+    test_dataset = dataset["test_dataset"]
+    reward_functions = dataset["reward_functions"]
 
     # 2. load and configure model
     logger.info(f"Loading model from {args.model.model_name_or_path}")
     model = AutoModelForCausalLM.from_pretrained(
         args.model.model_name_or_path, 
-        torch_dtype= torch.bfloat16 if args.training.dtype == "bfloat16" else torch.float16, 
+        torch_dtype= torch.bfloat16 if args.model.dtype == "bfloat16" else torch.float16, 
+        attn_implementation="flash_attention_2",
         device_map="auto"
     )
     logger.info(f"Model loaded successfully")
@@ -82,19 +85,7 @@ def train(
 
     # 5.Training configuration
     training_args = GRPOConfig(
-        output_dir=args.training.output_dir,
-        learning_rate=args.training.lr,
-        remove_unused_columns=args.training.remove_unused_columns,
-        gradient_accumulation_steps=args.training.gradient_accumulation_steps,
-        num_train_epochs=args.training.num_train_epochs,
-        bf16=True if args.training.dtype == "bfloat16" else False,
-        max_completion_length=args.training.max_completion_length,
-        num_generations=args.training.num_generations,
-        max_prompt_length=args.training.max_prompt_length,
-        logging_steps=args.training.logging_steps,
-        save_strategy=args.training.save_strategy,
-        save_steps=args.training.save_steps,
-        use_vllm=args.training.use_vllm,
+        **vars(args.training),
     )
 
     # 6.Train
@@ -102,7 +93,7 @@ def train(
     trainer = GRPOTrainer(
         model=model,
         processing_class=tokenizer,
-        reward_funcs=[format_reward, accuracy_reward],
+        reward_funcs=reward_functions,
         args=training_args,
         train_dataset=train_dataset
     )

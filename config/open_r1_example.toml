@@ -4,7 +4,7 @@
 [model]
     model_name_or_path = "Qwen/Qwen3-0.6B"
     dtype = "bfloat16"
-
+    
 [peft]
     use_peft = true
     task_type = "CAUSAL_LM"
@@ -29,8 +29,8 @@
     save_steps = 10
     use_vllm = false # do not use vllm and rollout w/ model.generate instead
     use_liger_kernel = true
-    bf16 = true
+    loss_type = "grpo"
 
 [dataset]
-    dataset_name_or_path = "AI-MO/NuminaMath-TIR"
+    dataset_name_or_path = "HuggingFaceH4/OpenR1-Math-220k-default-verified"
     example_numbers = 1e9 # use all examples

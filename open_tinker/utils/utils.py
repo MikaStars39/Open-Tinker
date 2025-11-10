@@ -10,16 +10,6 @@ SYSTEM_PROMPT = (
     "<think> reasoning process here </think><answer> answer here </answer>"
 )
 
-# Load and prepare dataset
-def make_conversation(example):
-    return {
-        "prompt": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": example["problem"]},
-        ],
-    }
-
-
 def parse_toml_to_args(config_path: str):
     """将 TOML 文件转换为支持点式访问的对象"""
     with open(config_path, 'rb') as f:
