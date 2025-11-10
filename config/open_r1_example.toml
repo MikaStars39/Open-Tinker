@@ -4,7 +4,7 @@
 [model]
     model_name_or_path = "Qwen/Qwen3-0.6B"
     dtype = "bfloat16"
-    
+
 [peft]
     use_peft = true
     task_type = "CAUSAL_LM"
@@ -12,7 +12,7 @@
     r = 8
     lora_alpha = 32
     lora_dropout = 0.1
-    target_modules = ["q_proj", "v_proj"]
+    target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "up_proj", "down_proj"]
 
 [training]
     learning_rate = 1e-6
