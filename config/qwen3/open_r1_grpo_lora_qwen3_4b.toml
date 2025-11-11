@@ -1,0 +1,48 @@
+[common]
+    seed = 42
+    debug = true # set to true to use debug mode w/ no logging to trackio or wandb
+
+[model]
+    model_name_or_path = "Qwen/Qwen3-4B-Base"
+    dtype = "bfloat16"
+
+[peft]
+    # type = "lora"
+    # type = "adalora
+    type = "miss"
+    use_peft = true
+    task_type = "CAUSAL_LM"
+    use_dora = false
+    r = 8
+    lora_alpha = 32
+    lora_dropout = 0.0
+    total_step = 1e3 # for adalora
+    target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "up_proj", "down_proj"]
+
+[training]
+    learning_rate = 1e-5
+    output_dir = ""
+    run_name = "grpo-lora-qwen3-0.6b"
+    remove_unused_columns = false
+    gradient_accumulation_steps = 16
+    num_train_epochs = 1
+    max_completion_length = 4096
+    num_generations = 8
+    max_prompt_length = 1024
+    logging_steps = 1
+    save_strategy = "steps"
+    save_steps = 128
+    use_vllm = true # (1) full-ft w/ vllm (2) others do not use vllm and rollout w/ model.generate instead
+    vllm_mode="colocate"
+    use_liger_kernel = true
+    loss_type = "grpo" # default is dapo which does not support by liger kernel lol
+    report_to = ["wandb"]
+
+[logging]
+    trackio_space_id = "MikaStars39/Open-Tinker"
+    trackio_project = "grpo-lora-qwen3-4b"
+    wandb_project = "grpo-lora-qwen3-4b"
+
+[dataset]
+    dataset_name_or_path = "HuggingFaceH4/OpenR1-Math-220k-default-verified"
+    example_numbers = 1e9 # use all examples
