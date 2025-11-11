@@ -1,17 +1,19 @@
-###
+## Env Settings
+
 ```
-pip install trl
-pip install accelerate
+pip install -r requirements.txt
+pip install vllm --no-build-isolation # vllm for trl rollout
 ```
 
 ### Flash Attention
 
 ```
-pip install flash-attn==2.7.3 --no-build-isolation
+uv pip install flash-attn --no-cache-dir --no-build-isolation
+python -c "import flash_attn" # verify
 ```
 
 ### Liger-Kernel for faster training
 
 ```
-pip install liger-kernel==0.6.3 --no-build-isolation
+pip install liger-kernel --no-build-isolation
 ```

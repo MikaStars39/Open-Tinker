@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=2 trl vllm-serve --model Qwen/Qwen3-4B-Base
