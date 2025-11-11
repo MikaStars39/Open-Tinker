@@ -4,7 +4,7 @@
 - DoRA ✅
 - MiSS ✅
 - AdaLoRA ❌
-- VeRA
+- VeRA ✅
 - RandLoRA
 
 ## Env Settings

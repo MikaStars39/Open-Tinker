@@ -76,17 +76,8 @@ def train(
     # 3. configure lora
     if args.peft.use_peft:
         logger.info(f"Detected PEFT configuration, configuring lora")
-        from open_tinker.lora.adapter import apply_lora, apply_adalora, apply_vera, apply_miss, apply_pissa
-        if args.peft.type == "adalora":
-            model = apply_adalora(model, args)
-        elif args.peft.type == "vera":
-            model = apply_vera(model, args)
-        elif args.peft.type == "miss":
-            model = apply_miss(model, args)
-        elif args.peft.type == "pissa":
-            model = apply_pissa(model, args)
-        else:
-            model = apply_lora(model, args)
+        from open_tinker.lora.adapter import apply_lora
+        model = apply_lora(model, args)
         logger.info(f"Lora configured successfully")
 
     # 4.Load and configure tokenizer for left padding
