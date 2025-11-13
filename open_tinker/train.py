@@ -77,6 +77,12 @@ def train(
     test_dataset = dataset["test_dataset"]
     reward_functions = dataset["reward_functions"]
 
+    if "reward_weights" in dataset:
+        reward_weights = dataset["reward_weights"]
+    else:
+        reward_weights = [1.0] * len(reward_functions)
+    args.training.reward_weights = reward_weights
+
     # 2. load and configure model
     logger.info(f"Loading model from {args.model.model_name_or_path}")
     model = AutoModelForCausalLM.from_pretrained(

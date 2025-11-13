@@ -1,18 +1,20 @@
-OUTPUT_DIR=outputs/grpo_lora_qwen2_5_3b_$(date +%Y%m%d_%H%M%S)
+unset WANDB_DISABLED
+OUTPUT_DIR=outputs/grpo_dora_qwen2_5_3b_$(date +%Y%m%d_%H%M%S)
 # OUTPUT_DIR=outputs/debug
 LOG_FILE=${OUTPUT_DIR}/output.log
 
 mkdir -p ${OUTPUT_DIR}
 
-CUDA_VISIBLE_DEVICES=0,1 ACCELERATE_LOG_LEVEL=info \
+CUDA_VISIBLE_DEVICES=2,3 ACCELERATE_LOG_LEVEL=info \
     accelerate launch \
-    --config_files scripts/accelerate/ds_zero2_2gpu.yaml \
+    --main_process_port 29501 \
+    --config_file scripts/accelerate/ds_zero2_2gpu.yaml \
     run.py train \
     --config.common.seed 42 \
     --config.common.debug false \
     --config.model.model_name_or_path "Qwen/Qwen2.5-3B-Instruct" \
     --config.model.dtype "bfloat16" \
-    --config.peft.type "lora" \
+    --config.peft.type "dora" \
     --config.peft.use_peft true \
     --config.peft.task_type "CAUSAL_LM" \
     --config.peft.r 8 \
@@ -37,6 +39,7 @@ CUDA_VISIBLE_DEVICES=0,1 ACCELERATE_LOG_LEVEL=info \
     --config.training.vllm_mode "colocate" \
     --config.training.vllm_gpu_memory_utilization 0.4 \
     --config.training.use_liger_kernel true \
+    --config.training.lr_scheduler_type "cosine" \
     --config.training.loss_type "dr_grpo" \
     --config.training.report_to '["wandb"]' \
     --config.logging.trackio_space_id "Open-Tinker/Open-Tinker" \

@@ -1,6 +1,7 @@
 import fire
 import tomllib
 from types import SimpleNamespace
+import sys
 
 from open_tinker.config.config import TrainConfig
 

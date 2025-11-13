@@ -8,138 +8,137 @@ from datasets import load_dataset
 # from https://github.com/philschmid/deep-learning-pytorch-huggingface/blob/main/training/mini-deepseek-r1-aha-grpo.ipynb
 # simple count down dataset
 
-
 def format_reward_func(completions, **kwargs):
     """
-    Format reward function. Checks if model output matches format: <think>...</think><answer>...</answer>
+    格式奖励函数，检查模型输出格式是否匹配: <think>...</think><answer>...</answer>
 
-    Args:
-        completions (list[str]): Generated outputs
-    Returns:
-        list[float]: Reward scores
+    参数:
+        completions (list[str]): 生成的输出
+    返回:
+        list[float]: 奖励分数
     """
-    # Initialize reward list
+    # 初始化奖励列表
     rewards = []
-    # Iterate over generated outputs
+    # 遍历生成的输出
     for completion in completions:
         try:
-            # Add <think> tag at start to facilitate regex matching
+            # 在生成的输出前添加<think>标签，便于后续正则表达式匹配
             completion = "<think>" + completion
 
-            if random.random() < 0.1:  # Write output to file with 10% probability
-                # Create output directory if not exists
+            if random.random() < 0.1:  # 1% 的概率将生成输出写入文件
+                # 创建生成输出目录（如果不存在）
                 os.makedirs("completion_samples", exist_ok=True)
                 log_file = os.path.join("completion_samples", "completion_samples.txt")
                 with open(log_file, "a") as f:
                     f.write(f"\n\n==============\n")
-                    f.write(completion)  # Write generated output
+                    f.write(completion)  # 写入生成的输出
 
-            # Regex to match <think> and <answer> tags
+            # 定义正则表达式模式，用于匹配 <think> 和 <answer> 标签
             regex = r"^<think>([^<]*(?:<(?!/?think>)[^<]*)*)<\/think>\n<answer>([\s\S]*?)<\/answer>$"
-            match = re.search(regex, completion, re.DOTALL)  # Regex match
+            match = re.search(regex, completion, re.DOTALL)  # 使用正则表达式进行匹配
 
             if match is None or len(match.groups()) != 2:
-                rewards.append(0.0)  # Reward 0 for incorrect format
+                rewards.append(0.0)  # 如果格式不正确，奖励为 0
             else:
-                rewards.append(1.0)  # Reward 1 for correct format
+                rewards.append(1.0)  # 如果格式正确，奖励为 1
         except Exception:
-            rewards.append(0.0)  # Reward 0 on exceptions
+            rewards.append(0.0)  # 如果发生异常，奖励为 0
 
     return rewards
 
 def equation_reward_func(completions, target, nums, **kwargs):
     """
-    Equation reward function. Checks if result is correct and numbers are used per requirements
-    (each number used once, using only provided numbers).
+    方程奖励函数，检查计算结果是否正确，数字是否符合使用要求（每个数字只用一次，只使用所提供的数字）
 
-    Args:
-        completions (list[str]): Generated outputs
-        target (list[str]): Expected answers
-        nums (list[str]): Provided numbers
+    参数:
+        completions (list[str]): 生成的输出
+        target (list[str]): 预期的答案
+        nums (list[str]): 可用的数字
 
-    Returns:
-        list[float]: Reward scores
+    返回:
+        list[float]: 奖励分数
     """
-    # Initialize reward list
+    # 初始化奖励列表
     rewards = []
-    # Iterate over outputs, targets and provided numbers
+    # 遍历生成的输出、预期的答案和可用的数字
     for completion, gt, numbers in zip(completions, target, nums):
         try:
-            # Add <think> tag at start to facilitate regex matching
+            # 在生成的输出前添加 <think> 标签，便于后续正则表达式匹配
             completion = "<think>" + completion
-            # Regex to match <answer> tag
+            # 定义正则表达式模式，用于匹配 <answer> 标签
             match = re.search(r"<answer>(.*?)<\/answer>", completion)
             if match is None:
-                rewards.append(0.0)  # Reward 0 if <answer> tag not found
+                rewards.append(0.0)  # 如果没有匹配到 <answer> 标签，奖励为 0
                 continue
-            equation = match.group(1).strip()  # Extract content inside <answer>
-            # Extract all numbers from the equation
+            equation = match.group(1).strip()  # 提取 <answer> 标签中的内容
+            # 提取方程中的所有数字
             used_numbers = [int(n) for n in re.findall(r"\d+", equation)]
 
-            # Check if all numbers are used and used only once
+            # 检查所有数字是否被使用且只使用一次
             if sorted(used_numbers) != sorted(numbers):
                 rewards.append(0.0)
                 continue
 
-            # Only allow digits, basic operators, parentheses and whitespace
+            # 定义允许的字符模式，只允许数字、运算符、括号和空白字符
             allowed_pattern = r"^[\d+\-*/().\s]+$"
             if not re.match(allowed_pattern, equation):
-                rewards.append(0.0)  # Reward 0 if equation contains invalid characters
+                rewards.append(0.0)  # 如果方程包含不允许的字符，奖励为 0
                 continue
 
-            # Compute equation result
+            # 计算方程的结果
             result = eval(equation, {"__builtins__": None}, {})
-            # Check if result matches ground truth (error < 1e-5)
+            # 检查方程是否正确且与预期答案匹配（误差小于 1e-5）
             if abs(float(result) - float(gt)) < 1e-5:
-                rewards.append(1.0)  # Reward 1 if correct
+                rewards.append(1.0)  # 如果正确，奖励为 1
 
-                # Write successful outputs to file with 10% probability
+                # 10% 的概率将成功的样本写入文件
                 if random.random() < 0.10:
+                    # 创建生成输出目录（如果不存在）
                     os.makedirs("completion_samples", exist_ok=True)
                     log_file = os.path.join(
                         "completion_samples", "success_completion_samples.txt"
                     )
                     with open(log_file, "a") as f:
                         f.write(f"\n\n==============\n")
-                        f.write(completion)
+                        f.write(completion)  # 写入生成的输出
             else:
-                rewards.append(0.0)  # Reward 0 if incorrect result
+                rewards.append(0.0)  # 如果不正确，奖励为 0
         except Exception:
-            rewards.append(0.0)  # Reward 0 if evaluation fails
+            rewards.append(0.0)  # 如果评估失败，奖励为 0
 
     return rewards
 
 def thought_len_reward_func(completions, **kwargs):
     """
-    "Thought length" reward function. Checks if <think> tag content length is greater than 1000.
+    思考长度奖励函数，检查 <think> 标签的长度是否大于 1000
 
-    Args:
-        completions (list[str]): Generated outputs
-    Returns:
-        list[float]: Reward scores
+    参数:
+        completions (list[str]): 生成的输出
+    返回:
+        list[float]: 奖励分数
     """
-    # Initialize reward list
+    # 初始化奖励列表
     rewards = []
-    # Iterate over generated outputs
+    # 遍历生成的输出
     for completion in completions:
         try:
-            # Add <think> tag at start to facilitate regex matching
+            # 在生成的输出前添加 <think> 标签，便于后续正则表达式匹配
             completion = "<think>" + completion
-            # Regex to match <think> tag
+            # 定义正则表达式模式，用于匹配 <think> 标签
             match = re.search(r"<think>(.*?)</think>", completion)
-            # If <think> tag is found
+            # 如果匹配到 <think> 标签
             if match:
-                thought_process = match.group(1).strip()  # Extract inside <think> tag
-                thought_length = len(thought_process)  # Compute length
+                thought_process = match.group(1).strip()  # 提取 <think> 标签中的内容
+                thought_length = len(thought_process)  # 计算思考过程的长度
                 if thought_length > 1000:
-                    rewards.append(1.0)  # Reward 1 if length > 1000
+                    rewards.append(1.0)  # 如果思考过程长度大于 1000，奖励为 1
                 else:
-                    rewards.append(0.0)  # Otherwise reward 0
+                    rewards.append(0.0)  # 否则奖励为 0
             else:
-                rewards.append(0.0)  # Reward 0 if tag not found
+                rewards.append(0.0)  # 如果没有匹配到 <think> 标签，奖励为 0
                 continue
         except Exception:
-            rewards.append(0.0)  # Reward 0 on exceptions
+            rewards.append(0.0)  # 如果发生异常，奖励为 0
 
     return rewards
 
@@ -194,3 +193,28 @@ def load_count_down_dataset(
         "test_dataset": test_dataset,
         "reward_functions": [format_reward_func, equation_reward_func, thought_len_reward_func]
     }
+
+if __name__ == "__main__":
+    correct_sample_1 = """We need to find an equation using the numbers 19, 36, 55, and 7
+    exactly once, with basic arithmetic operations, that equals 65. One possible
+    combination is 55 + 36 - 19 + 7... </think>
+    <answer> 55 + 36 - 7 - 19 </answer>"""
+
+    correct_sample_2 = """ ... </think>
+    <answer> 55 + 36 - 7 - 19 </answer>"""
+
+    wrong_format = """User: Using the numbers [19, 36, 55, 7], create an equation that equals 65."""
+
+    wrong_format_2 = """To find the equation that equals 79 using the numbers 95, 78, 6, 88, I'll start by adding 88 and 95:                      
+    95 + 88 = 183                                                                                                              
+    Now, let's subtract 104 from 183 to get 79:
+    183 - 104 = 79
+    <think> 183 - 104 = 79 </think><think> 183 - 104 = 79 </think><answer> 183 - 104 = 79 </answer>"""
+
+    wrong_result = """ ... </think>
+    <answer> 55 + 36 - 7 - 18 </answer>"""
+
+    test_rewards = format_reward_func(completions=[correct_sample_1, correct_sample_2, wrong_format, wrong_format_2, wrong_result], target=["65", "65", "65", "65", "65"], nums=[[19, 36, 55, 7]] * 5)
+    assert test_rewards == [1.0, 1.0, 0.0, 0.0, 1.0], "Reward function is not working"
+    test_rewards = equation_reward_func(completions=[correct_sample_1, correct_sample_2, wrong_format, wrong_format_2, wrong_result], target=["65", "65", "65", "65", "65"], nums=[[19, 36, 55, 7]] * 5)
+    assert test_rewards == [1.0, 1.0, 0.0, 0.0, 0.0], "Reward function is not working"

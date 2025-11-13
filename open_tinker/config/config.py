@@ -51,8 +51,10 @@ class TrainingConfig:
     vllm_mode: str = "colocate"
     vllm_gpu_memory_utilization: float = 0.4
     use_liger_kernel: bool = True
+    lr_scheduler_type: str = "cosine"
     loss_type: str = "dr_grpo"  # default is dapo which does not support by liger kernel lol
     report_to: List[str] = field(default_factory=lambda: ["wandb"])
+    beta: float = 0.0
 
 
 @dataclass
