@@ -16,20 +16,21 @@ CUDA_VISIBLE_DEVICES=0,1 ACCELERATE_LOG_LEVEL=info \
     --config.peft.type "lora" \
     --config.peft.use_peft true \
     --config.peft.task_type "CAUSAL_LM" \
-    --config.peft.r 8 \
+    --config.peft.r 32 \
     --config.peft.lora_alpha 32 \
-    --config.peft.lora_dropout 0.1 \
+    --config.peft.lora_dropout 0.0 \
     --config.peft.total_step 1000 \
     --config.peft.target_modules '["q_proj","v_proj","k_proj","o_proj","up_proj","down_proj"]' \
-    --config.training.learning_rate 1e-6 \
+    --config.training.learning_rate 1e-4 \
     --config.training.beta 0.001 \
     --config.training.output_dir "${OUTPUT_DIR}" \
     --config.training.run_name "${OUTPUT_DIR}" \
     --config.training.remove_unused_columns false \
     --config.training.gradient_accumulation_steps 16 \
     --config.training.num_train_epochs 1 \
-    --config.training.max_completion_length 1024 \
+    --config.training.max_completion_length 4096 \
     --config.training.num_generations 8 \
+    --config.training.warmup_ratio 0.01 \
     --config.training.max_prompt_length 256 \
     --config.training.logging_steps 1 \
     --config.training.save_strategy "steps" \

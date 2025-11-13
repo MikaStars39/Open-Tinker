@@ -55,6 +55,7 @@ class TrainingConfig:
     loss_type: str = "dr_grpo"  # default is dapo which does not support by liger kernel lol
     report_to: List[str] = field(default_factory=lambda: ["wandb"])
     beta: float = 0.0
+    warmup_ratio: float = 0.0
 
 
 @dataclass
