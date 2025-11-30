@@ -42,5 +42,39 @@ def apply_lora(model, args):
             task_type=args.peft.task_type,
         )
         return get_peft_model(model, lora_config)
+    elif args.peft.type == "milora":
+        from .milora import add_svd_initialized_lora
+        return add_svd_initialized_lora(
+            model=model,
+            rank=args.peft.r,
+        )
+    elif args.peft.type == "layernorm":
+        from peft import get_peft_model, TaskType, LNTuningConfig
+        peft_config = LNTuningConfig(
+            task_type=TaskType.CAUSAL_LM,
+        )
+        return get_peft_model(model, peft_config)
+    elif args.peft.type == "adalora":
+        from peft import AdaLoraConfig, get_peft_model
+        config = AdaLoraConfig(
+            peft_type="ADALORA",
+            task_type=args.peft.task_type,
+            init_r=args.peft.r,
+            lora_alpha=args.peft.lora_alpha,
+            target_modules=args.peft.target_modules,
+            lora_dropout=args.peft.lora_dropout,
+            total_step=args.training.max_steps,
+        )
+        return get_peft_model(model, config)
+    elif args.peft.type == "IA3":
+        from peft import IA3Config, get_peft_model, TaskType
+        config = IA3Config(task_type=TaskType.CAUSAL_LM)
+        return get_peft_model(model, config)
+    elif args.peft.type == "milora_plus":
+        from .milora_plus import add_svd_initialized_lora
+        return add_svd_initialized_lora(
+            model=model,
+            rank=args.peft.r,
+        )
     else:
         raise ValueError(f"Unsupported PEFT type: {args.peft.type}")

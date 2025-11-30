@@ -13,12 +13,10 @@
 | VeRA          | ✅     | Vector-based Random Adaptation |
 | PiSSA         | ✅     | Principal Singular values & Singular vectors Adaptation |
 | AdaLoRA       | ❌     | Rank allocation unstable under RL |
-| RandLoRA      | 🔄     | Coming soon |
-| P-Tuning v2   | 🔄     | Prefix tuning variant |
-| LayerNorm Tuning | 🔄  | Efficient bias-only |
-| DeLoRA        | 🔄     | Dynamic expansion |
 | X-LoRA        | 🔄     | Cross-layer routing |
-| LoKr          | 🔄     | Kronecker-product adaptation |
+| QLoRA         | 🔄     | Kronecker-product adaptation |
+| MiLoRA        | 🔄     | Kronecker-product adaptation |
+
 
 > Full list & references: [Awesome-LoRA](https://github.com/Yuheng2000/Awesome-LoRA)
 
@@ -43,3 +41,24 @@ python -c "import flash_attn" # verify
 ```
 pip install liger-kernel --no-build-isolation
 ```
+
+## Benchmark
+
+Math: aime24, aime25, math500, GPQA diamond, amc23
+
+Code: 
+
+
+|  Task  |Version|  Metric  |Value |   |Stderr|
+|--------|-------|----------|-----:|---|-----:|
+|aime24:0|       |pass@k:k=1|0.3667|±  |0.0895|
+|        |       |avg@n:n=1 |0.3667|±  |0.0895|
+|all     |       |pass@k:k=1|0.3667|±  |0.0895|
+|        |       |avg@n:n=1 |0.3667|±  |0.0895|
+
+|  Task  |Version|  Metric  |Value |   |Stderr|
+|--------|-------|----------|-----:|---|-----:|
+|aime24:0|       |pass@k:k=1|0.4667|±  |0.0926|
+|        |       |avg@n:n=1 |0.4667|±  |0.0926|
+|all     |       |pass@k:k=1|0.4667|±  |0.0926|
+|        |       |avg@n:n=1 |0.4667|±  |0.0926|

@@ -1,0 +1,10 @@
+model_parameters:
+    model_name: "openai/local-model"
+    base_url: "http://localhost:8001/v1"
+    api_key: "EMPTY"
+    concurrent_requests: 128
+    generation_parameters:
+      temperature: 0.6
+      top_p: 0.95
+      max_new_tokens: 28672
+      seed: 42
