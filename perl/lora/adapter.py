@@ -70,5 +70,11 @@ def apply_lora(model, args):
         from peft import IA3Config, get_peft_model, TaskType
         config = IA3Config(task_type=TaskType.CAUSAL_LM)
         return get_peft_model(model, config)
+    elif args.peft.type == "milora_plus":
+        from .milora_plus import add_svd_initialized_lora
+        return add_svd_initialized_lora(
+            model=model,
+            rank=args.peft.r,
+        )
     else:
         raise ValueError(f"Unsupported PEFT type: {args.peft.type}")

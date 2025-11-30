@@ -1,5 +1,5 @@
 unset WANDB_DISABLED
-OUTPUT_DIR=outputs/grpo_adalora_qwen2_5_1_5b_$(date +%Y%m%d_%H%M%S)
+OUTPUT_DIR=outputs/grpo_ia3_qwen2_5_1_5b_$(date +%Y%m%d_%H%M%S)
 # OUTPUT_DIR=outputs/debug
 LOG_FILE=${OUTPUT_DIR}/output.log
 
@@ -7,7 +7,7 @@ mkdir -p ${OUTPUT_DIR}
 
 CUDA_VISIBLE_DEVICES=4,5,6,7 ACCELERATE_LOG_LEVEL=info \
     accelerate launch \
-    --main_process_port 29503 \
+    --main_process_port 29505 \
     --config_file scripts/accelerate/ds_zero2_4gpu.yaml \
     run.py train \
     --config.common.seed 42 \
@@ -15,7 +15,7 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 ACCELERATE_LOG_LEVEL=info \
     --config.model.model_name_or_path "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" \
     --config.model.dtype "bfloat16" \
     --config.peft.use_peft true \
-    --config.peft.type "adalora" \
+    --config.peft.type "milora" \
     --config.peft.task_type "CAUSAL_LM" \
     --config.peft.r 32 \
     --config.peft.lora_alpha 64 \

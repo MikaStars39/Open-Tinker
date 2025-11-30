@@ -1,24 +1,24 @@
 unset WANDB_DISABLED
-OUTPUT_DIR=outputs/grpo_adalora_qwen2_5_1_5b_$(date +%Y%m%d_%H%M%S)
+OUTPUT_DIR=outputs/grpo_lora_qwen2_5_3b_$(date +%Y%m%d_%H%M%S)
 # OUTPUT_DIR=outputs/debug
 LOG_FILE=${OUTPUT_DIR}/output.log
 
 mkdir -p ${OUTPUT_DIR}
 
-CUDA_VISIBLE_DEVICES=4,5,6,7 ACCELERATE_LOG_LEVEL=info \
+CUDA_VISIBLE_DEVICES=0,1,2,3 ACCELERATE_LOG_LEVEL=info \
     accelerate launch \
     --main_process_port 29503 \
     --config_file scripts/accelerate/ds_zero2_4gpu.yaml \
     run.py train \
     --config.common.seed 42 \
     --config.common.debug false \
-    --config.model.model_name_or_path "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" \
+    --config.model.model_name_or_path "nvidia/OpenMath-Nemotron-1.5B" \
     --config.model.dtype "bfloat16" \
     --config.peft.use_peft true \
-    --config.peft.type "adalora" \
+    --config.peft.type "lora" \
     --config.peft.task_type "CAUSAL_LM" \
-    --config.peft.r 32 \
-    --config.peft.lora_alpha 64 \
+    --config.peft.r 16 \
+    --config.peft.lora_alpha 32 \
     --config.peft.lora_dropout 0.05 \
     --config.peft.total_step 1000 \
     --config.peft.target_modules '["q_proj","v_proj","k_proj","o_proj","up_proj","down_proj","gate_proj"]' \

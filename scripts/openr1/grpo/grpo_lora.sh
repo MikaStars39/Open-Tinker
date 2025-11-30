@@ -1,13 +1,13 @@
 unset WANDB_DISABLED
-OUTPUT_DIR=outputs/grpo_adalora_qwen2_5_1_5b_$(date +%Y%m%d_%H%M%S)
+OUTPUT_DIR=outputs/dr_grpo_lora_$(date +%Y%m%d_%H%M%S)
 # OUTPUT_DIR=outputs/debug
 LOG_FILE=${OUTPUT_DIR}/output.log
 
 mkdir -p ${OUTPUT_DIR}
 
-CUDA_VISIBLE_DEVICES=4,5,6,7 ACCELERATE_LOG_LEVEL=info \
+CUDA_VISIBLE_DEVICES=0,1,2,3 ACCELERATE_LOG_LEVEL=info \
     accelerate launch \
-    --main_process_port 29503 \
+    --main_process_port 29502 \
     --config_file scripts/accelerate/ds_zero2_4gpu.yaml \
     run.py train \
     --config.common.seed 42 \
@@ -15,10 +15,10 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 ACCELERATE_LOG_LEVEL=info \
     --config.model.model_name_or_path "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" \
     --config.model.dtype "bfloat16" \
     --config.peft.use_peft true \
-    --config.peft.type "adalora" \
+    --config.peft.type "lora" \
     --config.peft.task_type "CAUSAL_LM" \
-    --config.peft.r 32 \
-    --config.peft.lora_alpha 64 \
+    --config.peft.r 16 \
+    --config.peft.lora_alpha 32 \
     --config.peft.lora_dropout 0.05 \
     --config.peft.total_step 1000 \
     --config.peft.target_modules '["q_proj","v_proj","k_proj","o_proj","up_proj","down_proj","gate_proj"]' \
@@ -45,8 +45,8 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 ACCELERATE_LOG_LEVEL=info \
     --config.training.lr_scheduler_kwargs.min_lr_rate 0.1 \
     --config.training.vllm_mode "colocate" \
     --config.training.vllm_gpu_memory_utilization 0.4 \
-    --config.training.use_liger_kernel false \
-    --config.training.loss_type "dapo" \
+    --config.training.use_liger_kernel true \
+    --config.training.loss_type "grpo" \
     --config.training.report_to '["wandb"]' \
     --config.logging.trackio_space_id "Open-Tinker/Open-Tinker" \
     --config.logging.trackio_project "grpo-full-qwen3-4b" \
