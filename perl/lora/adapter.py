@@ -119,6 +119,7 @@ def apply_lora(model, args):
             model=model,
             optimizer_cls=AdamW,
             lr=args.training.learning_rate,
+            loraplus_lr_ratio=2.0,
         )
         return optimizer, model
     else:
