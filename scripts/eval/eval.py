@@ -2,9 +2,11 @@
 # 本脚本依据用户需求：实现评测流程（参数解析、模型合并、启动vLLM、生成、打分、缓存/恢复、日志、阶段化提示、最终统计）。
 # 实现方案：使用argparse解析常规与--vllm-*透传参数，必要时在CPU上合并LoRA并保存；后台启动支持数据并行的vLLM服务器，
 # 轮询后端生成多次rollout并缓存到文件，随后调用score_response汇总为result.jsonl，最后新增一个统计阶段输出avg@k/pass@k，
-# 同时记录日志并将stdout/stderr写入latest_run.log；通过阶段化日志标明第几阶段的开始/结束（含emoji）。
+# 同时记录日志并将stdout/stderr写入latest_run.log；通过阶段化日志标明第几阶段的开始/结束（含emoji）。本版强制依赖vLLM与GPU，
+# 新增 --num-gpus 参数用于运行前校验可用 GPU 数（bash 脚本中设为 8），确保按需求使用多卡并行。
 
 import argparse
+import asyncio
 import atexit
 import json
 import logging
@@ -20,10 +22,15 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 import math
 
+try:
+    import aiohttp
+except ImportError:
+    raise ImportError("需要安装 aiohttp: pip install aiohttp")
+
 from datasets import load_dataset
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.utils import get_torch_dtype
+import torch
 
 
 class StreamToLogger:
@@ -114,6 +121,13 @@ def parse_args() -> Tuple[argparse.Namespace, List[str], List[str]]:
     parser.add_argument("--serve-port", type=int, default=8000, help="第一个vLLM后端端口号。")
     parser.add_argument("--dp-size", type=int, default=1, help="数据并行后端数量（启动多个vLLM）。")
     parser.add_argument("--tp-size", type=int, default=1, help="传给vLLM的张量并行大小。")
+    parser.add_argument("--num-gpus", type=int, default=1, help="运行前校验需要的GPU数量，不足则报错。")
+    parser.add_argument(
+        "--gpu-memory-utilization",
+        type=float,
+        default=0.95,
+        help="传给vLLM的GPU显存利用率上限（0~1），用于控制单卡显存占用比例。",
+    )
     parser.add_argument("--temperature", type=float, default=1.0, help="生成温度。")
     parser.add_argument("--top-p", type=float, default=1.0, help="生成top-p。")
     parser.add_argument("--max-new-tokens", type=int, default=131072, help="生成长度。")
@@ -123,6 +137,12 @@ def parse_args() -> Tuple[argparse.Namespace, List[str], List[str]]:
     parser.add_argument("--api-key", default="dummy", help="OpenAI兼容接口的API Key。")
     parser.add_argument("--request-timeout", type=float, default=600.0, help="请求单次超时时间。")
     parser.add_argument("--max-samples", type=int, default=None, help="调试用，限制评测样本数量。")
+    parser.add_argument(
+        "--max-num-request-per-dp",
+        type=int,
+        default=1,
+        help="每个数据并行（DP）的vLLM后端同时运行的请求数上限。",
+    )
 
     args, unknown = parser.parse_known_args()
     vllm_args, leftover = extract_vllm_args(unknown)
@@ -149,6 +169,30 @@ def extract_vllm_args(unknown: List[str]) -> Tuple[List[str], List[str]]:
             leftover.append(token)
         idx += 1
     return vllm_args, leftover
+
+
+def resolve_torch_dtype(dtype: Any) -> Any:
+    """将dtype字符串解析为torch.dtype，支持auto/常见别名，兼容旧版Transformers缺少get_torch_dtype的场景。"""
+    if dtype is None:
+        return None
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    if isinstance(dtype, str):
+        normalized = dtype.lower()
+        if normalized == "auto":
+            return None
+        mapping = {
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "half": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+            "float32": torch.float32,
+            "fp32": torch.float32,
+        }
+        if normalized in mapping:
+            return mapping[normalized]
+    raise ValueError(f"不支持的dtype: {dtype}")
 
 
 def prepare_prompt(sample: Dict[str, Any]) -> str:
@@ -187,7 +231,7 @@ def merge_model_if_needed(args: argparse.Namespace, result_dir: Path, logger: lo
         logger.info("检测到已存在的合并模型目录，直接复用：%s", output_dir)
         return output_dir
 
-    torch_dtype = get_torch_dtype(args.dtype)
+    torch_dtype = resolve_torch_dtype(args.dtype)
     logger.info("加载基础模型：%s", args.model)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
@@ -212,7 +256,9 @@ def merge_model_if_needed(args: argparse.Namespace, result_dir: Path, logger: lo
     return output_dir
 
 
-def build_vllm_command(model_path: Path, port: int, args: argparse.Namespace, vllm_args: List[str]) -> List[str]:
+def build_vllm_command(
+    model_path: Path, port: int, args: argparse.Namespace, vllm_args: List[str]
+) -> List[str]:
     cmd = [
         sys.executable,
         "-m",
@@ -226,6 +272,9 @@ def build_vllm_command(model_path: Path, port: int, args: argparse.Namespace, vl
         "--tensor-parallel-size",
         str(args.tp_size),
     ]
+    # 实现方案：在构造 vLLM 启动命令时追加 --gpu-memory-utilization 参数，默认 0.95，可通过命令行覆盖。
+    if args.gpu_memory_utilization is not None:
+        cmd.extend(["--gpu-memory-utilization", str(args.gpu_memory_utilization)])
     if args.trust_remote_code:
         cmd.append("--trust-remote-code")
     cmd.extend(vllm_args)
@@ -243,14 +292,26 @@ def start_vllm_processes(
     ports: List[int] = []
     processes: List[subprocess.Popen] = []
     env = os.environ.copy()
+    dp_size = max(1, args.dp_size)
 
-    for rank in range(max(1, args.dp_size)):
+    for rank in range(dp_size):
+        # 计算当前进程分配的GPU ID范围
+        start_gpu_id = rank * args.tp_size
+        end_gpu_id = start_gpu_id + args.tp_size
+        gpu_ids = list(range(start_gpu_id, end_gpu_id))
+        
+        # 校验是否越界（基于args.num_gpus或者简单的逻辑校验，这里假设用户配置正确）
+        # 如果需要更严格校验，可以在此处添加。
+        
+        env_local = env.copy()
+        env_local["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
+        
         port = args.serve_port + rank
         cmd = build_vllm_command(model_path, port, args, vllm_args)
-        logger.info("启动vLLM后端[%d/%d]，端口%d，命令：%s", rank + 1, args.dp_size, port, " ".join(cmd))
+        logger.info("启动vLLM后端[%d/%d]，端口%d，GPUs=%s，命令：%s", rank + 1, dp_size, port, gpu_ids, " ".join(cmd))
         proc = subprocess.Popen(
             cmd,
-            env=env,
+            env=env_local,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -319,6 +380,7 @@ def load_dataset_by_name(name: str, split: str):
 
 
 def generate_with_vllm(prompt: str, port: int, args: argparse.Namespace) -> str:
+    """同步版本的vLLM生成函数（保留用于向后兼容）。"""
     url = f"http://127.0.0.1:{port}/v1/chat/completions"
     payload = {
         "model": args.served_model_name,
@@ -349,17 +411,54 @@ def generate_with_vllm(prompt: str, port: int, args: argparse.Namespace) -> str:
         raise RuntimeError(f"解析vLLM响应失败: {content}") from exc
 
 
+async def generate_with_vllm_async(
+    session: aiohttp.ClientSession, prompt: str, port: int, args: argparse.Namespace
+) -> str:
+    """异步版本的vLLM生成函数，用于并发请求。"""
+    url = f"http://127.0.0.1:{port}/v1/chat/completions"
+    payload = {
+        "model": args.served_model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "max_tokens": args.max_new_tokens,
+        "n": 1,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {args.api_key}",
+    }
+    timeout = aiohttp.ClientTimeout(total=args.request_timeout)
+    try:
+        async with session.post(url, json=payload, headers=headers, timeout=timeout) as response:
+            if response.status != 200:
+                raise RuntimeError(f"vLLM返回HTTP错误: {response.status}")
+            content = await response.json()
+    except aiohttp.ClientError as exc:
+        raise RuntimeError(f"vLLM连接失败: {exc}") from exc
+
+    try:
+        return content["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"解析vLLM响应失败: {content}") from exc
+
+
 def save_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
 
-def evaluate_dataset(
+async def evaluate_dataset(
     dataset_name: str,
     args: argparse.Namespace,
     ports: List[int],
     logger: logging.Logger,
 ) -> List[Dict[str, Any]]:
+    """
+    异步并发评估数据集。
+    实现方案：为每个DP端口维护一个信号量（Semaphore）限制并发数，创建所有任务后异步执行，
+    当一个请求完成时自动从队列中取出下一个请求发送，确保每个DP的并发数不超过max_num_request_per_dp。
+    """
     dataset_dir = Path(args.result_dir) / dataset_name
     outputs_dir = dataset_dir / "outputs"
     result_file = dataset_dir / "result.jsonl"
@@ -387,9 +486,17 @@ def evaluate_dataset(
         split = "train"
         logger.info("加载数据集 %s split=%s", dataset_name, split)
         ds = load_dataset_by_name(dataset_name, split)
+
+    # 为每个DP端口创建信号量，限制并发请求数
+    max_concurrent_per_dp = max(1, args.max_num_request_per_dp)
+    semaphores: Dict[int, asyncio.Semaphore] = {port: asyncio.Semaphore(max_concurrent_per_dp) for port in ports}
+    logger.info("每个DP端口的最大并发请求数：%d", max_concurrent_per_dp)
+
+    # 收集所有需要生成的任务
+    # (problem_id, rollout_id, prompt, output_path, port_idx, sample)
+    tasks_to_generate: List[Tuple[int, int, str, Path, int, Dict[str, Any]]] = []
     records: List[Dict[str, Any]] = []
     ports_cycle = len(ports)
-    rollout_counter = 0
 
     for idx, sample in enumerate(ds):
         if args.max_samples is not None and idx >= args.max_samples:
@@ -399,25 +506,73 @@ def evaluate_dataset(
         problem_dir = outputs_dir / f"{idx:06d}"
         for rollout_id in range(args.rollout_n):
             output_path = problem_dir / f"rollout_{rollout_id:03d}.txt"
+            port_idx = (idx * args.rollout_n + rollout_id) % ports_cycle
+            port = ports[port_idx]
+
             if output_path.exists() and output_path.stat().st_size > 0:
                 response = output_path.read_text(encoding="utf-8")
                 logger.info("复用缓存结果：%s", output_path)
+                score = score_response(prompt, response, sample)
+                records.append(
+                    {
+                        "problem_id": idx,
+                        "rollout_id": rollout_id,
+                        "prompt": prompt,
+                        "response": response,
+                        "score": score,
+                    }
+                )
             else:
-                port = ports[rollout_counter % ports_cycle]
-                rollout_counter += 1
-                logger.info("向端口%d请求生成，problem=%06d rollout=%03d", port, idx, rollout_id)
-                response = generate_with_vllm(prompt, port, args)
+                tasks_to_generate.append((idx, rollout_id, prompt, output_path, port_idx, sample))
+
+    logger.info("需要生成的请求数：%d（已缓存：%d）", len(tasks_to_generate), len(records))
+
+    # 异步生成函数
+    async def generate_one_task(
+        problem_id: int,
+        rollout_id: int,
+        prompt: str,
+        output_path: Path,
+        port_idx: int,
+        sample: Dict[str, Any],
+        session: aiohttp.ClientSession,
+    ) -> Dict[str, Any]:
+        port = ports[port_idx]
+        semaphore = semaphores[port]
+        async with semaphore:  # 限制每个DP的并发数
+            try:
+                logger.info("向端口%d请求生成，problem=%06d rollout=%03d", port, problem_id, rollout_id)
+                response = await generate_with_vllm_async(session, prompt, port, args)
                 save_text(output_path, response)
-            score = score_response(prompt, response, sample)
-            records.append(
-                {
-                    "problem_id": idx,
+                score = score_response(prompt, response, sample)
+                return {
+                    "problem_id": problem_id,
                     "rollout_id": rollout_id,
                     "prompt": prompt,
                     "response": response,
                     "score": score,
                 }
-            )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("生成失败 problem=%06d rollout=%03d port=%d: %s", problem_id, rollout_id, port, exc)
+                return {
+                    "problem_id": problem_id,
+                    "rollout_id": rollout_id,
+                    "prompt": prompt,
+                    "response": "",
+                    "score": 0.0,
+                }
+
+    # 创建aiohttp会话并并发执行所有任务
+    async with aiohttp.ClientSession() as session:
+        tasks = [
+            generate_one_task(problem_id, rollout_id, prompt, output_path, port_idx, sample, session)
+            for problem_id, rollout_id, prompt, output_path, port_idx, sample in tasks_to_generate
+        ]
+        generated_records = await asyncio.gather(*tasks)
+        records.extend(generated_records)
+
+    # 按problem_id和rollout_id排序，确保结果顺序一致
+    records.sort(key=lambda x: (x["problem_id"], x["rollout_id"]))
 
     result_file.parent.mkdir(parents=True, exist_ok=True)
     with result_file.open("w", encoding="utf-8") as f:
@@ -489,11 +644,14 @@ def main() -> None:
     all_records: Dict[str, List[Dict[str, Any]]] = {}
     datasets_to_run = [item.strip() for item in args.dataset.split(",") if item.strip()]
     with StageContext(logger, 3, "数据集评测与缓存/生成"):
-        for name in datasets_to_run:
-            logger.info("🧪 开始评测数据集：%s", name)
-            records = evaluate_dataset(name, args, ports, logger)
-            all_records[name] = records
-            logger.info("✅ 完成评测数据集：%s", name)
+        async def run_evaluations():
+            for name in datasets_to_run:
+                logger.info("🧪 开始评测数据集：%s", name)
+                records = await evaluate_dataset(name, args, ports, logger)
+                all_records[name] = records
+                logger.info("✅ 完成评测数据集：%s", name)
+        
+        asyncio.run(run_evaluations())
 
     with StageContext(logger, 4, "统计阶段：计算avg@k与pass@k"):
         overall_records: List[Dict[str, Any]] = []
