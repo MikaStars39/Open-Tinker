@@ -1,4 +1,5 @@
 results/
+*.parquet
 
 # Byte-compiled / optimized / DLL files
 .DS_Store
