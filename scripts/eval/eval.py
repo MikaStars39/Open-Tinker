@@ -56,7 +56,7 @@ def prepare_prompt(dataset_name: str, sample: Dict[str, Any]) -> str:
     problem = None
     if "problem" in sample:
         problem = sample["problem"]
-    if "question" in sample:
+    elif "question" in sample:
         problem = sample["question"]
     elif "prompt" in sample:
         problem = sample["prompt"]
