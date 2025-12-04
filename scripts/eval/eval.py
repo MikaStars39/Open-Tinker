@@ -91,7 +91,9 @@ class StreamToLogger:
 
 def setup_logging(result_dir: Path) -> logging.Logger:
     result_dir.mkdir(parents=True, exist_ok=True)
-    log_path = result_dir / "latest_run.log"
+    latest_log_path = result_dir / "latest_run.log"
+    log_path = result_dir / "logs" / f"{time.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
@@ -100,9 +102,14 @@ def setup_logging(result_dir: Path) -> logging.Logger:
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
     file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
     file_handler.setFormatter(formatter)
+    latest_file_handler = logging.FileHandler(
+        latest_log_path, mode="w", encoding="utf-8"
+    )
+    latest_file_handler.setFormatter(formatter)
     console_handler = logging.StreamHandler(sys.__stdout__)
     console_handler.setFormatter(formatter)
     logging.root.addHandler(file_handler)
+    logging.root.addHandler(latest_file_handler)
     logging.root.addHandler(console_handler)
 
     stdout_logger = logging.getLogger("stdout")
@@ -558,6 +565,7 @@ async def generate_responses(
     rollout_n: int,
     ports: List[int],
     logger: logging.Logger,
+    semaphores: Dict[int, asyncio.Semaphore],
 ) -> None:
     """
     异步并发生成响应并存入output.jsonl。
@@ -568,7 +576,7 @@ async def generate_responses(
     output_file = dataset_dir / "output.jsonl"
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    with StageContext(logger, "C.1", "读取缓存的输出"):
+    with StageContext(logger, f"C[{dataset_name}].1", "读取缓存的输出"):
         generated_results: List[Dict[str, Any]] = []
         cache: Set[Tuple[int, int]] = set()
 
@@ -593,10 +601,9 @@ async def generate_responses(
 
         logger.info("已加载缓存条目数：%d", len(generated_results))
 
-    with StageContext(logger, "C.2", "准备生成任务"):
+    with StageContext(logger, f"C[{dataset_name}].2", "准备生成任务"):
         ds = load_dataset_from_hf(dataset_name)
-        max_concurrent_per_dp = max(1, args.max_num_request // args.dp_size)
-        semaphores = {port: asyncio.Semaphore(max_concurrent_per_dp) for port in ports}
+        # max_concurrent_per_dp and semaphores are now handled externally and passed in
 
         tasks_to_process: List[Tuple[int, int, str, int]] = []
         ports_cycle = len(ports)
@@ -621,7 +628,7 @@ async def generate_responses(
             visualizer.cleanup()
             return
 
-    with StageContext(logger, "C.3", "并行生成"):
+    with StageContext(logger, f"C[{dataset_name}].3", "并行生成"):
         file_lock = asyncio.Lock()
 
         async def generate_one_task(
@@ -637,12 +644,6 @@ async def generate_responses(
 
             async with semaphore:
                 try:
-                    logger.info(
-                        "向端口%d请求生成，problem=%06d rollout=%03d",
-                        port,
-                        problem_id,
-                        rollout_id,
-                    )
                     response = await generate_with_vllm_async(
                         session, prompt, port, args
                     )
@@ -696,7 +697,7 @@ def evaluate_dataset_results(
     result_file = dataset_dir / "result.jsonl"
     result_json_file = dataset_dir / "result.json"
 
-    with StageContext(logger, "D.1", "加载模型输出"):
+    with StageContext(logger, f"D[{dataset_name}].1", "加载模型输出"):
         if not output_file.exists():
             raise ValueError(f"未找到output.jsonl，无法进行评测：{dataset_name}")
 
@@ -715,10 +716,10 @@ def evaluate_dataset_results(
                 except json.JSONDecodeError:
                     pass
 
-    with StageContext(logger, "D.2", "加载原数据集"):
+    with StageContext(logger, f"D[{dataset_name}].2", "加载原数据集"):
         ds = load_dataset_from_hf(dataset_name)
 
-    with StageContext(logger, "D.3", "并行评测&计算指标"):
+    with StageContext(logger, f"D[{dataset_name}].3", "并行评测&计算指标"):
         records_for_metrics: List[Dict[str, Any]] = []
         raw_stats_list: List[Dict[str, Any]] = []
 
@@ -795,6 +796,7 @@ def evaluate_dataset_results(
                     }
                 )
 
+    with StageContext(logger, f"D[{dataset_name}].4", "汇总统计并写入文件"):
         if raw_stats_list:
             summary = {
                 "avg": statistics.mean(x["avg"] for x in raw_stats_list),
@@ -848,27 +850,55 @@ async def main() -> None:
                 stop_vllm_processes(processes, logger)
                 sys.exit(1)
 
+    # 初始化全局信号量
+    dp_size = max(1, args.dp_size)
+    max_concurrent_per_dp = max(1, args.max_num_request // dp_size)
+    semaphores = {port: asyncio.Semaphore(max_concurrent_per_dp) for port in ports}
+    logger.info("全局并发控制已初始化：每DP进程最大并发数=%d", max_concurrent_per_dp)
+
+    async def process_dataset_task(
+        args: argparse.Namespace,
+        dataset_name: str,
+        rollout_n: int,
+        ports: List[int],
+        logger: logging.Logger,
+        semaphores: Dict[int, asyncio.Semaphore],
+    ) -> None:
+        with StageContext(logger, f"C[{dataset_name}]", "数据集生成（缓存/生成）"):
+            await generate_responses(
+                args, dataset_name, rollout_n, ports, logger, semaphores
+            )
+
+        with StageContext(logger, f"D[{dataset_name}]", "评测与统计"):
+            # evaluate_dataset_results 是同步CPU密集型任务，放入线程池以免阻塞其他并发任务
+            await asyncio.to_thread(
+                evaluate_dataset_results, args, dataset_name, rollout_n, logger
+            )
+
     datasets_to_run = [item.strip() for item in args.dataset.split(",") if item.strip()]
+    tasks = []
 
-    with StageContext(logger, "C", "数据集生成（缓存/生成）"):
-        for task_abbr in datasets_to_run:
-            logger.info("🚀 开始生成数据集：%s", task_abbr)
+    for task_abbr in datasets_to_run:
+        if "@" in task_abbr:
+            dataset_name = task_abbr.split("@")[0]
+            rollout_n = int(task_abbr.split("@")[1])
+        else:
+            dataset_name = task_abbr
             rollout_n = args.rollout_n
-            if "@" in task_abbr:
-                rollout_n = int(task_abbr.split("@")[1])
-                task_abbr = task_abbr.split("@")[0]
-            await generate_responses(args, task_abbr, rollout_n, ports, logger)
-            logger.info("✅ 完成生成数据集：%s (rollout=%d)", task_abbr, rollout_n)
 
-    with StageContext(logger, "D", "评测与统计"):
-        for task_abbr in datasets_to_run:
-            logger.info("📊 开始评测数据集：%s", task_abbr)
-            rollout_n = args.rollout_n
-            if "@" in task_abbr:
-                rollout_n = int(task_abbr.split("@")[1])
-                task_abbr = task_abbr.split("@")[0]
-            evaluate_dataset_results(args, task_abbr, rollout_n, logger)
-            logger.info("📊 数据集%s (rollout=%d) 评测完成", task_abbr, rollout_n)
+        tasks.append(
+            asyncio.create_task(
+                process_dataset_task(
+                    args, dataset_name, rollout_n, ports, logger, semaphores
+                )
+            )
+        )
+
+    if tasks:
+        logger.info("并发提交了 %d 个数据集任务，开始执行...", len(tasks))
+        await asyncio.gather(*tasks)
+    else:
+        logger.warning("没有需要执行的数据集任务。")
 
     stop_vllm_processes(processes, logger)
     logger.info("全部评测流程完成。")
