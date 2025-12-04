@@ -10,7 +10,7 @@ mkdir -p ${OUTPUT_DIR}
 CUDA_VISIBLE_DEVICES=1,2 ACCELERATE_LOG_LEVEL=info \
     accelerate launch \
     --main_process_port 29501 \
-    --config_file scripts/accelerate/ds_zero2_2gpu.yaml \
+    --config_file scripts/accelerate/ds_zero2_4gpu.yaml \
     run.py train \
     --config.common.seed 42 \
     --config.common.debug false \
@@ -29,7 +29,7 @@ CUDA_VISIBLE_DEVICES=1,2 ACCELERATE_LOG_LEVEL=info \
     --config.training.output_dir "${OUTPUT_DIR}" \
     --config.training.run_name "${OUTPUT_DIR}" \
     --config.training.remove_unused_columns false \
-    --config.training.gradient_accumulation_steps 16 \
+    --config.training.gradient_accumulation_steps 8 \
     --config.training.num_train_epochs 1 \
     --config.training.max_completion_length 16384 \
     --config.training.num_generations 8 \
@@ -46,11 +46,10 @@ CUDA_VISIBLE_DEVICES=1,2 ACCELERATE_LOG_LEVEL=info \
     --config.training.lr_scheduler_type "constant" \
     --config.training.lr_scheduler_kwargs.min_lr_rate 0.1 \
     --config.training.vllm_mode "colocate" \
-    --config.training.vllm_gpu_memory_utilization 0.4 \
+    --config.training.vllm_gpu_memory_utilization 0.3 \
     --config.training.use_liger_kernel false \
     --config.training.loss_type "dapo" \
     --config.training.report_to '["wandb"]' \
-    --config.training.resume_from_checkpoint "outputs/dapo_milora_plus_20251201_131939/checkpoint-704" \
     --config.logging.trackio_space_id "Open-Tinker/Open-Tinker" \
     --config.logging.trackio_project "grpo-full-qwen3-4b" \
     --config.logging.wandb_project "grpo-full-qwen3-4b" \

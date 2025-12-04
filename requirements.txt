@@ -7,7 +7,6 @@ math-verify
 torch
 transformers
 trl[vllm]
-trackio
-tomli
 peft
 wandb
+flash_attn
