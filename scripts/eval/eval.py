@@ -19,8 +19,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import statistics
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple, Optional
+from typing import Any, Dict, Iterable, List, Tuple, Optional, Set
 import math
 
 try:
@@ -36,9 +37,9 @@ import torch
 
 PROMPT_TEMPLATE = """{problem} Please reason step by step, and put your final answer within \\boxed{{}}."""
 DATASETS = {
-    'aime2024': ('HuggingFaceH4/aime_2024', 'train'),
-    'aime2025': ('yentinglin/aime_2025', 'train'),
-    'hmmt2025': ('FlagEval/HMMT_2025', 'train'),
+    "aime2024": ("HuggingFaceH4/aime_2024", "train"),
+    "aime2025": ("yentinglin/aime_2025", "train"),
+    "hmmt2025": ("FlagEval/HMMT_2025", "train"),
 }
 
 
@@ -53,27 +54,27 @@ def load_dataset_from_hf(dataset_name: str):
 def prepare_prompt(dataset_name: str, sample: Dict[str, Any]) -> str:
     """根据sample构建模型输入prompt，可按需修改增强。"""
     problem = None
-    if 'problem' in sample:
-        problem = sample['problem']
-    if 'question' in sample:
-        problem = sample['question']
-    elif 'prompt' in sample:
-        problem = sample['prompt']
+    if "problem" in sample:
+        problem = sample["problem"]
+    if "question" in sample:
+        problem = sample["question"]
+    elif "prompt" in sample:
+        problem = sample["prompt"]
     else:
         raise ValueError(f"不支持的样本: {sample}")
     return PROMPT_TEMPLATE.format(problem=problem)
 
 
-os.environ['PYTHONPATH'] = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + ":" + os.environ.get('PYTHONPATH', '')
+os.environ["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 from utils import grade_answer_verl
 
 
-def score_response(dataset_name: str, prompt: str, response: str, sample: Dict[str, Any]) -> float:
+def score_response(dataset_name: str, response: str, sample: Dict[str, Any]) -> float:
     ground_truth = None
-    if 'answer' in sample:
-        ground_truth = sample['answer']
-    elif 'label' in sample:
-        ground_truth = sample['label']
+    if "answer" in sample:
+        ground_truth = sample["answer"]
+    elif "label" in sample:
+        ground_truth = sample["label"]
     else:
         raise ValueError(f"不支持的样本: {sample}")
     return 1.0 if grade_answer_verl(response, ground_truth) else 0.0
@@ -147,27 +148,55 @@ class StageContext:
         self.emoji_fail = emoji_fail
 
     def __enter__(self) -> "StageContext":
-        self.logger.info("%s 第%s阶段开始：%s", self.emoji_start, self.stage_id, self.name)
+        self.logger.info(
+            "%s 第%s阶段开始：%s", self.emoji_start, self.stage_id, self.name
+        )
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
         if exc_type is None:
-            self.logger.info("%s 第%s阶段结束：%s", self.emoji_end, self.stage_id, self.name)
+            self.logger.info(
+                "%s 第%s阶段结束：%s", self.emoji_end, self.stage_id, self.name
+            )
         else:
-            self.logger.error("%s 第%s阶段失败：%s，错误：%s", self.emoji_fail, self.stage_id, self.name, exc)
+            self.logger.error(
+                "%s 第%s阶段失败：%s，错误：%s",
+                self.emoji_fail,
+                self.stage_id,
+                self.name,
+                exc,
+            )
 
 
 def parse_args() -> Tuple[argparse.Namespace, List[str], List[str]]:
-    parser = argparse.ArgumentParser(description="评测入口脚本，支持模型合并、vLLM启动与多数据集评测。")
+    parser = argparse.ArgumentParser(
+        description="评测入口脚本，支持模型合并、vLLM启动与多数据集评测。"
+    )
     parser.add_argument("--result-dir", required=True, help="中间过程与结果输出目录。")
     parser.add_argument("--model", required=True, help="基础模型名称或路径。")
-    parser.add_argument("--adapter", default="", help="LoRA/PEFT adapter路径，留空表示不合并。")
-    parser.add_argument("--dataset", default="aime2024", help="要评测的数据集缩写，英文逗号分隔（如：aime2024）。")
-    parser.add_argument("--rollout-n", type=int, default=1, help="每个sample生成多少次rollout。")
-    parser.add_argument("--serve-port", type=int, default=8000, help="第一个vLLM后端端口号。")
-    parser.add_argument("--dp-size", type=int, default=1, help="数据并行后端数量（启动多个vLLM）。")
-    parser.add_argument("--tp-size", type=int, default=1, help="传给vLLM的张量并行大小。")
-    parser.add_argument("--num-gpus", type=int, default=1, help="运行前校验需要的GPU数量，不足则报错。")
+    parser.add_argument(
+        "--adapter", default="", help="LoRA/PEFT adapter路径，留空表示不合并。"
+    )
+    parser.add_argument(
+        "--dataset",
+        default="aime2024",
+        help="要评测的数据集缩写，英文逗号分隔（如：aime2024）。",
+    )
+    parser.add_argument(
+        "--rollout-n", type=int, default=1, help="每个sample生成多少次rollout。"
+    )
+    parser.add_argument(
+        "--serve-port", type=int, default=8000, help="第一个vLLM后端端口号。"
+    )
+    parser.add_argument(
+        "--dp-size", type=int, default=1, help="数据并行后端数量（启动多个vLLM）。"
+    )
+    parser.add_argument(
+        "--tp-size", type=int, default=1, help="传给vLLM的张量并行大小。"
+    )
+    parser.add_argument(
+        "--num-gpus", type=int, default=1, help="运行前校验需要的GPU数量，不足则报错。"
+    )
     parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
@@ -178,11 +207,19 @@ def parse_args() -> Tuple[argparse.Namespace, List[str], List[str]]:
     parser.add_argument("--top-p", type=float, default=1.0, help="生成top-p。")
     parser.add_argument("--max-new-tokens", type=int, default=131072, help="生成长度。")
     parser.add_argument("--dtype", default="auto", help="模型dtype，用于合并环节。")
-    parser.add_argument("--trust-remote-code", action="store_true", help="是否信任远程代码。")
-    parser.add_argument("--served-model-name", default="eval-model", help="vLLM对外暴露的模型名。")
+    parser.add_argument(
+        "--trust-remote-code", action="store_true", help="是否信任远程代码。"
+    )
+    parser.add_argument(
+        "--served-model-name", default="eval-model", help="vLLM对外暴露的模型名。"
+    )
     parser.add_argument("--api-key", default="dummy", help="OpenAI兼容接口的API Key。")
-    parser.add_argument("--request-timeout", type=float, default=600.0, help="请求单次超时时间。")
-    parser.add_argument("--max-samples", type=int, default=None, help="调试用，限制评测样本数量。")
+    parser.add_argument(
+        "--request-timeout", type=float, default=600.0, help="请求单次超时时间。"
+    )
+    parser.add_argument(
+        "--max-samples", type=int, default=None, help="调试用，限制评测样本数量。"
+    )
     parser.add_argument(
         "--max-num-request-per-dp",
         type=int,
@@ -202,7 +239,7 @@ def extract_vllm_args(unknown: List[str]) -> Tuple[List[str], List[str]]:
     while idx < len(unknown):
         token = unknown[idx]
         if token.startswith("--vllm-"):
-            stripped = "--" + token[len("--vllm-"):]
+            stripped = "--" + token[len("--vllm-") :]
             if "=" in token:
                 _, value = token.split("=", 1)
                 vllm_args.extend([stripped, value])
@@ -218,7 +255,9 @@ def extract_vllm_args(unknown: List[str]) -> Tuple[List[str], List[str]]:
 
 
 def resolve_torch_dtype(dtype: Any) -> Any:
-    """将dtype字符串解析为torch.dtype，支持auto/常见别名，兼容旧版Transformers缺少get_torch_dtype的场景。"""
+    """
+    将dtype字符串解析为torch.dtype，支持auto/常见别名，兼容旧版Transformers缺少get_torch_dtype的场景。
+    """
     if dtype is None:
         return None
     if isinstance(dtype, torch.dtype):
@@ -241,7 +280,9 @@ def resolve_torch_dtype(dtype: Any) -> Any:
     raise ValueError(f"不支持的dtype: {dtype}")
 
 
-def merge_model_if_needed(args: argparse.Namespace, result_dir: Path, logger: logging.Logger) -> Path:
+def merge_model_if_needed(
+    args: argparse.Namespace, result_dir: Path, logger: logging.Logger
+) -> Path:
     if not args.adapter:
         logger.info("未提供adapter，直接使用基础模型：%s", args.model)
         return Path(args.model)
@@ -301,13 +342,18 @@ def build_vllm_command(
     return cmd
 
 
-def pipe_to_logger(stream: Iterable[str], logger: logging.Logger, level: int, prefix: str) -> None:
+def pipe_to_logger(
+    stream: Iterable[str], logger: logging.Logger, level: int, prefix: str
+) -> None:
     for line in stream:
         logger.log(level, "%s%s", prefix, line.rstrip("\n"))
 
 
 def start_vllm_processes(
-    model_path: Path, args: argparse.Namespace, vllm_args: List[str], logger: logging.Logger
+    model_path: Path,
+    args: argparse.Namespace,
+    vllm_args: List[str],
+    logger: logging.Logger,
 ) -> Tuple[List[subprocess.Popen], List[int]]:
     ports: List[int] = []
     processes: List[subprocess.Popen] = []
@@ -328,7 +374,14 @@ def start_vllm_processes(
 
         port = args.serve_port + rank
         cmd = build_vllm_command(model_path, port, args, vllm_args)
-        logger.info("启动vLLM后端[%d/%d]，端口%d，GPUs=%s，命令：%s", rank + 1, dp_size, port, gpu_ids, " ".join(cmd))
+        logger.info(
+            "启动vLLM后端[%d/%d]，端口%d，GPUs=%s，命令：%s",
+            rank + 1,
+            dp_size,
+            port,
+            gpu_ids,
+            " ".join(cmd),
+        )
         proc = subprocess.Popen(
             cmd,
             env=env_local,
@@ -355,7 +408,9 @@ def start_vllm_processes(
     return processes, ports
 
 
-def stop_vllm_processes(processes: List[subprocess.Popen], logger: logging.Logger) -> None:
+def stop_vllm_processes(
+    processes: List[subprocess.Popen], logger: logging.Logger
+) -> None:
     for proc in processes:
         if proc.poll() is None:
             try:
@@ -374,7 +429,9 @@ def stop_vllm_processes(processes: List[subprocess.Popen], logger: logging.Logge
                     pass
 
 
-def wait_for_vllm_ready(port: int, process: subprocess.Popen, timeout: float, logger: logging.Logger) -> bool:
+def wait_for_vllm_ready(
+    port: int, process: subprocess.Popen, timeout: float, logger: logging.Logger
+) -> bool:
     deadline = time.time() + timeout
     url = f"http://127.0.0.1:{port}/health"
     while time.time() < deadline:
@@ -390,13 +447,6 @@ def wait_for_vllm_ready(port: int, process: subprocess.Popen, timeout: float, lo
             time.sleep(2)
     logger.error("等待端口%d的vLLM超时。", port)
     return False
-
-
-def load_dataset_by_name(name: str, split: str):
-    if ":" in name:
-        path, subset = name.split(":", 1)
-        return load_dataset(path, subset, split=split)
-    return load_dataset(name, split=split)
 
 
 def generate_with_vllm(prompt: str, port: int, args: argparse.Namespace) -> str:
@@ -450,7 +500,9 @@ async def generate_with_vllm_async(
     }
     timeout = aiohttp.ClientTimeout(total=args.request_timeout)
     try:
-        async with session.post(url, json=payload, headers=headers, timeout=timeout) as response:
+        async with session.post(
+            url, json=payload, headers=headers, timeout=timeout
+        ) as response:
             if response.status != 200:
                 raise RuntimeError(f"vLLM返回HTTP错误: {response.status}")
             content = await response.json()
@@ -463,137 +515,226 @@ async def generate_with_vllm_async(
         raise RuntimeError(f"解析vLLM响应失败: {content}") from exc
 
 
-def save_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-async def evaluate_dataset(
-    dataset_name: str,
+async def generate_responses(
     args: argparse.Namespace,
+    dataset_name: str,
+    rollout_n: int,
     ports: List[int],
     logger: logging.Logger,
-) -> List[Dict[str, Any]]:
+) -> None:
     """
-    异步并发评估数据集。
-    实现方案：为每个DP端口维护一个信号量（Semaphore）限制并发数，创建所有任务后异步执行，
-    当一个请求完成时自动从队列中取出下一个请求发送，确保每个DP的并发数不超过max_num_request_per_dp。
+    异步并发生成响应并存入output.jsonl。
+    实现方案：读取已有output.jsonl建立缓存，仅生成缺失的条目。
+    生成结果实时追加写入output.jsonl。
     """
     dataset_dir = Path(args.result_dir) / dataset_name
-    outputs_dir = dataset_dir / "outputs"
-    result_file = dataset_dir / "result.jsonl"
+    output_file = dataset_dir / "output.jsonl"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    # 使用任务模块中的load_dataset函数加载数据集
-    ds = load_dataset_from_hf(dataset_name)
+    with StageContext(logger, "C.1", "读取缓存的输出"):
+        generated_results: List[Dict[str, Any]] = []
+        cache: Set[Tuple[int, int]] = set()
 
-    # 为每个DP端口创建信号量，限制并发请求数
-    max_concurrent_per_dp = max(1, args.max_num_request_per_dp)
-    semaphores: Dict[int, asyncio.Semaphore] = {port: asyncio.Semaphore(max_concurrent_per_dp) for port in ports}
-    logger.info("每个DP端口的最大并发请求数：%d", max_concurrent_per_dp)
+        if output_file.exists():
+            with output_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        if (
+                            "problem_id" in data
+                            and "rollout_id" in data
+                            and "response" in data
+                        ):
+                            generated_results.append(data)
+                            cache.add((data["problem_id"], data["rollout_id"]))
+                    except json.JSONDecodeError:
+                        logger.warning("output.jsonl中存在无效JSON行，已跳过。")
 
-    # 收集所有需要处理的任务
-    # (problem_id, rollout_id, prompt, output_path, port_idx, sample)
-    tasks_to_process: List[Tuple[int, int, str, Path, int, Dict[str, Any]]] = []
-    cached_count = 0
-    ports_cycle = len(ports)
+        logger.info("已加载缓存条目数：%d", len(generated_results))
 
-    for idx, sample in enumerate(ds):
-        # 使用任务模块中的prepare_prompt函数
-        prompt = prepare_prompt(dataset_name, sample)
-        problem_dir = outputs_dir / f"{idx:06d}"
-        for rollout_id in range(args.rollout_n):
-            output_path = problem_dir / f"rollout_{rollout_id:03d}.txt"
-            port_idx = (idx * args.rollout_n + rollout_id) % ports_cycle
-            if output_path.exists() and output_path.stat().st_size > 0:
-                cached_count += 1
-            tasks_to_process.append((idx, rollout_id, prompt, output_path, port_idx, sample))
+    with StageContext(logger, "C.2", "准备生成任务"):
+        ds = load_dataset_from_hf(dataset_name)
+        max_concurrent_per_dp = max(1, args.max_num_request_per_dp)
+        semaphores = {port: asyncio.Semaphore(max_concurrent_per_dp) for port in ports}
 
-    logger.info(
-        "需要处理的请求总数：%d（已存在缓存：%d，需新生成：%d）",
-        len(tasks_to_process),
-        cached_count,
-        len(tasks_to_process) - cached_count,
-    )
+        tasks_to_process: List[Tuple[int, int, str, int]] = []
+        ports_cycle = len(ports)
 
-    # 异步生成函数
-    async def generate_one_task(
-        problem_id: int,
-        rollout_id: int,
-        prompt: str,
-        output_path: Path,
-        port_idx: int,
-        sample: Dict[str, Any],
-        session: aiohttp.ClientSession,
-    ) -> Dict[str, Any]:
-        response = ""
-        # 用户要求：若输出文件存在则在此处直接复用并跳过generate_with_vllm_async，避免在主循环重复写评分逻辑。
-        if output_path.exists() and output_path.stat().st_size > 0:
-            response = output_path.read_text(encoding="utf-8")
-            logger.info("复用缓存结果：%s", output_path)
-        else:
+        for idx, sample in enumerate(ds):
+            prompt = prepare_prompt(dataset_name, sample)
+            for rollout_id in range(rollout_n):
+                if (idx, rollout_id) in cache:
+                    continue
+                port_idx = (idx * rollout_n + rollout_id) % ports_cycle
+                tasks_to_process.append((idx, rollout_id, prompt, port_idx))
+
+        logger.info("需要新生成的请求数：%d", len(tasks_to_process))
+
+        if not tasks_to_process:
+            logger.info("所有请求已在缓存中，无需生成。")
+            return
+
+    with StageContext(logger, "C.3", "并行生成"):
+        file_lock = asyncio.Lock()
+
+        async def generate_one_task(
+            problem_id: int,
+            rollout_id: int,
+            prompt: str,
+            port_idx: int,
+            session: aiohttp.ClientSession,
+        ) -> None:
             port = ports[port_idx]
             semaphore = semaphores[port]
-            async with semaphore:  # 限制每个DP的并发数
+            response = ""
+
+            async with semaphore:
                 try:
-                    logger.info("向端口%d请求生成，problem=%06d rollout=%03d", port, problem_id, rollout_id)
-                    response = await generate_with_vllm_async(session, prompt, port, args)
-                    # 实现方案：在调用score_response之前先保存响应到文件，确保即使score_response报错也能保留响应
-                    save_text(output_path, response)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("生成响应失败 problem=%06d rollout=%03d port=%d: %s", problem_id, rollout_id, port, exc)
-                    # 如果生成失败，response为空字符串，但也要保存（可能是空文件）
-                    if response:
-                        save_text(output_path, response)
-                    return {
-                        "problem_id": problem_id,
-                        "rollout_id": rollout_id,
-                        "prompt": prompt,
-                        "response": response,
-                        "score": 0.0,
-                        "details": {},
-                    }
+                    logger.info(
+                        "向端口%d请求生成，problem=%06d rollout=%03d",
+                        port,
+                        problem_id,
+                        rollout_id,
+                    )
+                    response = await generate_with_vllm_async(
+                        session, prompt, port, args
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "生成失败 problem=%06d rollout=%03d port=%d: %s",
+                        problem_id,
+                        rollout_id,
+                        port,
+                        exc,
+                    )
+                    response = ""
 
-        # 响应已保存或来自缓存，现在尝试评分
-        score = 0.0
-        details = {}
-        try:
-            # 使用任务模块中的score_response函数
-            score_result = score_response(dataset_name, prompt, response, sample)
-            # 兼容返回元组或单个值的情况
-            if isinstance(score_result, tuple):
-                score, details = score_result
-            else:
-                score = score_result
-                details = {}
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("评分失败 problem=%06d rollout=%03d，响应已保存，使用默认分数。错误：%s", problem_id, rollout_id, exc)
+            record = {
+                "problem_id": problem_id,
+                "rollout_id": rollout_id,
+                "response": response,
+            }
 
-        return {
-            "problem_id": problem_id,
-            "rollout_id": rollout_id,
-            "prompt": prompt,
-            "response": response,
-            "score": score,
-            "details": details,
-        }
+            generated_results.append(record)
 
-    # 创建aiohttp会话并并发执行所有任务
-    async with aiohttp.ClientSession() as session:
-        tasks = [
-            generate_one_task(problem_id, rollout_id, prompt, output_path, port_idx, sample, session)
-            for problem_id, rollout_id, prompt, output_path, port_idx, sample in tasks_to_process
-        ]
-        records = await asyncio.gather(*tasks)
+            async with file_lock:
+                with output_file.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    # 按problem_id和rollout_id排序，确保结果顺序一致
-    records.sort(key=lambda x: (x["problem_id"], x["rollout_id"]))
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                generate_one_task(pid, rid, pmt, pidx, session)
+                for pid, rid, pmt, pidx in tasks_to_process
+            ]
+            await asyncio.gather(*tasks)
 
-    result_file.parent.mkdir(parents=True, exist_ok=True)
-    with result_file.open("w", encoding="utf-8") as f:
-        for record in records:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    logger.info("数据集 %s 评测完成，结果写入 %s", dataset_name, result_file)
-    return records
+        logger.info("数据集 %s 生成完成，结果存入 %s", dataset_name, output_file)
+
+
+def evaluate_dataset_results(
+    args: argparse.Namespace,
+    dataset_name: str,
+    rollout_n: int,
+    logger: logging.Logger,
+) -> Dict[str, Dict[int, float]]:
+    """
+    评测阶段：读取output.jsonl，评分并生成result.jsonl，返回统计指标。
+    """
+    dataset_dir = Path(args.result_dir) / dataset_name
+    output_file = dataset_dir / "output.jsonl"
+    result_file = dataset_dir / "result.jsonl"
+
+    with StageContext(logger, "D.1", "加载模型输出"):
+        if not output_file.exists():
+            raise ValueError(f"未找到output.jsonl，无法进行评测：{dataset_name}")
+
+        outputs_map: Dict[int, List[Tuple[int, str]]] = {}
+        with output_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    if "problem_id" in d and "rollout_id" in d:
+                        outputs_map.setdefault(d["problem_id"], []).append(
+                            (d["rollout_id"], d.get("response", ""))
+                        )
+                except json.JSONDecodeError:
+                    pass
+
+    with StageContext(logger, "D.2", "加载原数据集"):
+        ds = load_dataset_from_hf(dataset_name)
+
+    with StageContext(logger, "D.3", "并行评测&计算指标"):
+        records_for_metrics: List[Dict[str, Any]] = []
+
+        with result_file.open("w", encoding="utf-8") as rf:
+            for idx, sample in enumerate(ds):
+                problem_id = idx
+                prompt = prepare_prompt(dataset_name, sample)
+
+                rollouts = outputs_map.get(problem_id, [])
+                # 按rollout_id排序
+                rollouts.sort(key=lambda x: x[0])
+                rollout_dict = {r[0]: r[1] for r in rollouts}
+
+                responses = []
+                scores = []
+
+                for rid in range(rollout_n):
+                    resp = rollout_dict.get(rid, "")
+                    responses.append(resp)
+
+                    if resp:
+                        try:
+                            s_res = score_response(dataset_name, resp, sample)
+                            if isinstance(s_res, tuple):
+                                score = float(s_res[0])
+                            else:
+                                score = float(s_res)
+                        except Exception as e:
+                            logger.warning("评分出错 p=%d r=%d: %s", problem_id, rid, e)
+                            score = 0.0
+                    else:
+                        score = 0.0
+                    scores.append(score)
+
+                    records_for_metrics.append(
+                        {"problem_id": problem_id, "rollout_id": rid, "score": score}
+                    )
+
+                if scores:
+                    avg_val = statistics.mean(scores)
+                    max_val = max(scores)
+                    min_val = min(scores)
+                    mean_val = avg_val
+                    try:
+                        std_val = statistics.stdev(scores)
+                    except statistics.StatisticsError:
+                        std_val = 0.0
+                else:
+                    avg_val = max_val = min_val = mean_val = std_val = 0.0
+
+                record = {
+                    "problem_id": problem_id,
+                    "prompt": prompt,
+                    "responses": responses,
+                    "scores": scores,
+                    "avg": avg_val,
+                    "max": max_val,
+                    "min": min_val,
+                    "mean": mean_val,
+                    "std": std_val,
+                }
+                rf.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        logger.info("评测完成，结果写入 %s", result_file)
+
+    return compute_metrics(records_for_metrics, rollout_n)
 
 
 def compute_pass_at_k(num_samples: int, num_correct: int, k: int) -> float:
@@ -604,7 +745,9 @@ def compute_pass_at_k(num_samples: int, num_correct: int, k: int) -> float:
     return 1 - (math.comb(num_samples - num_correct, k) / math.comb(num_samples, k))
 
 
-def compute_metrics(records: List[Dict[str, Any]], rollout_n: int) -> Dict[str, Dict[int, float]]:
+def compute_metrics(
+    records: List[Dict[str, Any]], rollout_n: int
+) -> Dict[str, Dict[int, float]]:
     by_problem: Dict[int, List[float]] = {}
     for rec in records:
         by_problem.setdefault(int(rec["problem_id"]), []).append(float(rec["score"]))
@@ -629,16 +772,16 @@ def compute_metrics(records: List[Dict[str, Any]], rollout_n: int) -> Dict[str, 
     return {"avg_at_k": avg_at_k, "pass_at_k": pass_at_k}
 
 
-def main() -> None:
+async def main() -> None:
     args, vllm_args, leftover = parse_args()
     logger = setup_logging(Path(args.result_dir))
     if leftover:
         logger.warning("检测到无法识别的参数（将被忽略）：%s", leftover)
 
-    with StageContext(logger, 'A', "准备模型/合并LoRA"):
+    with StageContext(logger, "A", "准备模型/合并LoRA"):
         model_path = merge_model_if_needed(args, Path(args.result_dir), logger)
 
-    with StageContext(logger, 2, "启动vLLM后端"):
+    with StageContext(logger, "B", "启动vLLM后端"):
         processes, ports = start_vllm_processes(model_path, args, vllm_args, logger)
         atexit.register(stop_vllm_processes, processes, logger)
 
@@ -655,37 +798,36 @@ def main() -> None:
                 stop_vllm_processes(processes, logger)
                 sys.exit(1)
 
-    all_records: Dict[str, List[Dict[str, Any]]] = {}
     datasets_to_run = [item.strip() for item in args.dataset.split(",") if item.strip()]
-    with StageContext(logger, 3, "数据集评测与缓存/生成"):
-        async def run_evaluations():
-            for task_abbr in datasets_to_run:
-                logger.info("🧪 开始评测数据集：%s", task_abbr)
-                # 使用任务模块进行评测
-                records = await evaluate_dataset(task_abbr, args, ports, logger)
-                all_records[task_abbr] = records
-                logger.info("✅ 完成评测数据集：%s", task_abbr)
 
-        asyncio.run(run_evaluations())
+    with StageContext(logger, "C", "数据集生成（缓存/生成）"):
+        for task_abbr in datasets_to_run:
+            logger.info("🚀 开始生成数据集：%s", task_abbr)
+            rollout_n = args.rollout_n
+            if "@" in task_abbr:
+                rollout_n = int(task_abbr.split("@")[1])
+                task_abbr = task_abbr.split("@")[0]
+            await generate_responses(args, task_abbr, rollout_n, ports, logger)
+            logger.info("✅ 完成生成数据集：%s (rollout=%d)", task_abbr, rollout_n)
 
-    with StageContext(logger, 4, "统计阶段：计算avg@k与pass@k"):
-        overall_records: List[Dict[str, Any]] = []
-        for name, records in all_records.items():
-            overall_records.extend(records)
-            metrics = compute_metrics(records, args.rollout_n)
-            logger.info("📊 数据集%s avg@k: %s", name, metrics["avg_at_k"])
-            logger.info("📈 数据集%s pass@k: %s", name, metrics["pass_at_k"])
-
-        overall_metrics = compute_metrics(overall_records, args.rollout_n) if overall_records else None
-        if overall_metrics:
-            logger.info("🌐 全部数据集合并 avg@k: %s", overall_metrics["avg_at_k"])
-            logger.info("🌟 全部数据集合并 pass@k: %s", overall_metrics["pass_at_k"])
-        else:
-            logger.warning("未获取到任何记录，跳过全局统计。")
+    with StageContext(logger, "D", "评测与统计"):
+        for task_abbr in datasets_to_run:
+            logger.info("📊 开始评测数据集：%s", task_abbr)
+            rollout_n = args.rollout_n
+            if "@" in task_abbr:
+                rollout_n = int(task_abbr.split("@")[1])
+                task_abbr = task_abbr.split("@")[0]
+            metrics = evaluate_dataset_results(args, task_abbr, rollout_n, logger)
+            logger.info(
+                "📊 数据集%s avg@%d: %s", task_abbr, rollout_n, metrics["avg_at_k"]
+            )
+            logger.info(
+                "📈 数据集%s pass@%d: %s", task_abbr, rollout_n, metrics["pass_at_k"]
+            )
 
     stop_vllm_processes(processes, logger)
     logger.info("全部评测流程完成。")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
