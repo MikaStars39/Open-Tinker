@@ -1,14 +1,6 @@
-#!/usr/bin/env python3
-# 本脚本依据用户需求：实现评测流程（参数解析、模型合并、启动vLLM、生成、打分、缓存/恢复、日志、阶段化提示、最终统计）。
-# 实现方案：使用argparse解析常规与--vllm-*透传参数，必要时在CPU上合并LoRA并保存；后台启动支持数据并行的vLLM服务器，
-# 轮询后端生成多次rollout并缓存到文件，随后调用score_response汇总为result.jsonl，最后新增一个统计阶段输出avg@k/pass@k，
-# 同时记录日志并将stdout/stderr写入latest_run.log；通过阶段化日志标明第几阶段的开始/结束（含emoji）。本版强制依赖vLLM与GPU，
-# 新增 --num-gpus 参数用于运行前校验可用 GPU 数（bash 脚本中设为 8），确保按需求使用多卡并行。
-
 import argparse
 import asyncio
 import atexit
-import importlib.util
 import json
 import logging
 import os
@@ -21,24 +13,25 @@ import urllib.error
 import urllib.request
 import statistics
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple, Optional, Set
-import math
-
-try:
-    import aiohttp
-except ImportError:
-    raise ImportError("需要安装 aiohttp: pip install aiohttp")
-
+from typing import Any, Dict, Iterable, List, Tuple, Set
+import aiohttp
 from datasets import load_dataset
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
 
+os.environ["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from utils import grade_answer_verl
+
+
 PROMPT_TEMPLATE = """{problem} Please reason step by step, and put your final answer within \\boxed{{}}."""
 DATASETS = {
     "aime2024": ("HuggingFaceH4/aime_2024", "train"),
     "aime2025": ("yentinglin/aime_2025", "train"),
+    "amc2023": ("zwhe99/amc23", "test"),
+    "math500": ("HuggingFaceH4/MATH-500", "test"),
+    "minerva": ("math-ai/minervamath", "test"),
     "hmmt2025": ("FlagEval/HMMT_2025", "train"),
 }
 
@@ -63,10 +56,6 @@ def prepare_prompt(dataset_name: str, sample: Dict[str, Any]) -> str:
     else:
         raise ValueError(f"不支持的样本: {sample}")
     return PROMPT_TEMPLATE.format(problem=problem)
-
-
-os.environ["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-from utils import grade_answer_verl
 
 
 def score_response(dataset_name: str, response: str, sample: Dict[str, Any]) -> float:
@@ -329,6 +318,9 @@ def merge_model_if_needed(
 def build_vllm_command(
     model_path: Path, port: int, args: argparse.Namespace, vllm_args: List[str]
 ) -> List[str]:
+    dp_size = max(1, args.dp_size)
+    max_concurrent_per_dp = max(1, args.max_num_request // dp_size)
+
     cmd = [
         sys.executable,
         "-m",
@@ -341,7 +333,10 @@ def build_vllm_command(
         str(port),
         "--tensor-parallel-size",
         str(args.tp_size),
+        "--max-num-seqs",
+        str(max_concurrent_per_dp),
     ]
+
     # 实现方案：在构造 vLLM 启动命令时追加 --gpu-memory-utilization 参数，默认 0.95，可通过命令行覆盖。
     if args.gpu_memory_utilization is not None:
         cmd.extend(["--gpu-memory-utilization", str(args.gpu_memory_utilization)])
@@ -621,6 +616,7 @@ async def generate_responses(
             for rollout_id in range(rollout_n):
                 if (idx, rollout_id) in cache:
                     continue
+                # port_idx = idx % ports_cycle
                 port_idx = (idx * rollout_n + rollout_id) % ports_cycle
                 tasks_to_process.append((idx, rollout_id, prompt, port_idx))
 
@@ -774,13 +770,12 @@ def evaluate_dataset_results(
                     avg_val = statistics.mean(scores)
                     max_val = max(scores)
                     min_val = min(scores)
-                    mean_val = avg_val
                     try:
                         std_val = statistics.stdev(scores)
                     except statistics.StatisticsError:
                         std_val = 0.0
                 else:
-                    avg_val = max_val = min_val = mean_val = std_val = 0.0
+                    avg_val = max_val = min_val = std_val = 0.0
 
                 record = {
                     "problem_id": problem_id,
@@ -790,8 +785,8 @@ def evaluate_dataset_results(
                     "avg": avg_val,
                     "max": max_val,
                     "min": min_val,
-                    "mean": mean_val,
                     "std": std_val,
+                    "data_source": dataset_name,
                 }
                 rf.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -801,7 +796,6 @@ def evaluate_dataset_results(
                         "avg": avg_val,
                         "max": max_val,
                         "min": min_val,
-                        "mean": mean_val,
                         "std": std_val,
                     }
                 )
@@ -811,21 +805,19 @@ def evaluate_dataset_results(
                 "avg": statistics.mean(x["avg"] for x in raw_stats_list),
                 "max": statistics.mean(x["max"] for x in raw_stats_list),
                 "min": statistics.mean(x["min"] for x in raw_stats_list),
-                "mean": statistics.mean(x["mean"] for x in raw_stats_list),
                 "std": statistics.mean(x["std"] for x in raw_stats_list),
             }
         else:
-            summary = {"avg": 0.0, "max": 0.0, "min": 0.0, "mean": 0.0, "std": 0.0}
+            summary = {"avg": 0.0, "max": 0.0, "min": 0.0, "std": 0.0}
 
         final_json = {
-            "dataset_name": dataset_name,
+            "data_source": dataset_name,
             "rollout_n": rollout_n,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "summary": summary,
             "raw": raw_stats_list,
             "response_example": [
                 outputs_map[0][0],
-                outputs_map[-1][-1],
             ],
         }
 

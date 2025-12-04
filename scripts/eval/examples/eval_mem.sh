@@ -14,8 +14,7 @@ export LD_LIBRARY_PATH="/root/miniconda3/envs/perl/lib:/usr/local/nvidia/lib64:$
 # export VLLM_LOGGING_LEVEL="DEBUG"
 
 PROJECT_DIR="/root/project/perl"
-DATASET="aime2025@32"
-# DATASET="aime2024@32,aime2025@32"
+DATASET="aime2024@32,aime2025@32,amc2023@32,math500@4,minerva@4,hmmt2025@32"
 # DATASET="hmmt2025@4"
 
 # Follow JustRL --- link: https://github.com/thunlp/JustRL/blob/main/evals/gen_vllm.py#L28-L30
@@ -40,12 +39,12 @@ function eval_model_with_adapter() {
     --dtype "bfloat16" 2>&1 | tee "eval.log";
 }
 
-eval_model_with_adapter \
-  "${PROJECT_DIR}/results/qwen3-4b-thinking-2507" \
-  "/mnt/shared-storage-user/p1-shared/Qwen/Qwen3-4B-Thinking-2507" \
-  "" \
-
 # eval_model_with_adapter \
-#   "${PROJECT_DIR}/results/deepseek-r1-1.5b" \
-#   "/mnt/shared-storage-user/p1-shared/Qwen/DeepSeek-R1-Distill-Qwen-1.5B" \
+#   "${PROJECT_DIR}/results/qwen3-4b-thinking-2507" \
+#   "/mnt/shared-storage-user/p1-shared/Qwen/Qwen3-4B-Thinking-2507" \
 #   "" \
+
+eval_model_with_adapter \
+  "${PROJECT_DIR}/results/deepseek-r1-1.5b" \
+  "/mnt/shared-storage-user/p1-shared/Qwen/DeepSeek-R1-Distill-Qwen-1.5B" \
+  "" \
