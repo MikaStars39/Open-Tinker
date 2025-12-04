@@ -1,13 +1,5 @@
 #! /bin/bash
 
-pkill -9 python
-pkill -9 -f "vllm.entrypoints.openai.api_server"
-pkill -9 -f "VLLM::EngineCore"
-sleep 1
-pkill -9 python
-pkill -9 -f "vllm.entrypoints.openai.api_server"
-pkill -9 -f "VLLM::EngineCore"
-
 set -exo pipefail
 
 export LD_LIBRARY_PATH="/root/miniconda3/envs/perl/lib:/usr/local/nvidia/lib64:$LD_LIBRARY_PATH"
@@ -24,6 +16,13 @@ TOP_P="0.9"
 MAX_NEW_TOKENS="31744"
 
 function eval_model_with_adapter() {
+  pkill -9 python;
+  pkill -9 -f "vllm.entrypoints.openai.api_server";
+  pkill -9 -f "VLLM::EngineCore";
+  sleep 1;
+  pkill -9 python;
+  pkill -9 -f "vllm.entrypoints.openai.api_server";
+  pkill -9 -f "VLLM::EngineCore";
   /root/miniconda3/envs/perl/bin/python "${PROJECT_DIR}/scripts/eval/eval.py" \
     --result-dir "$1" \
     --model "$2" \
